@@ -1,88 +1,123 @@
-#!/usr/bin/env node
-
-var _ = require('lodash'),
+var fs = require('fs'),
     path = require('path'),
     crypto = require('crypto'),
-    mkdirp = require('mkdirp'),
-    readline = require('readline'),
-    Promise = require('bluebird'),
-    chalk = require('chalk'),
-    debug = require('debug')('lib'),
-    spawn = require('child_process').spawn;
+    q = require('q'),
+    _ = require('lodash'),
+    split = require('split'),
+    ssh2auth = require('ssh2-auth'),
+    libdebug = require('debug')('sshrun');
 
-function onLine(stream, callback) {
-    var rl = readline.createInterface({
-        input: stream,
-        terminal: false
+function promisifyProcess(proc, opts) {
+    var procInfo = {
+        process: proc,
+        options: opts,
+        stdout: [],
+        stderr: [],
+        output: []
+    };
+
+    if (opts.captureOutput) {
+        proc.stdout.pipe(split()).on('data', function(line) {
+            procInfo.stdout.push(line);
+            procInfo.output.push(line);
+        });
+
+        proc.stderr.pipe(split()).on('data', function(line) {
+            procInfo.stderr.push(line);
+            procInfo.output.push(line);
+        });
+    }
+
+    var deferred = q.defer();
+
+    proc.on('close', function(code, signal) {
+        procInfo.code = code;
+        procInfo.signal = signal;
+        deferred.resolve(procInfo);
     });
 
-    rl.on('line', function(line) {
-        callback(line);
-    });
+    return deferred.promise;
 }
 
-function identitiesArgsArr(identityPaths) {
-    if (!identityPaths) return [];
+function connectToHost(connOpts, opts) {
+    var deferred = q.defer();
 
-    var idents = Array.isArray(identityPaths)
-        ? identityPaths : [ identityPaths ];
-
-    var params = [];
-    idents.forEach(function(ident) {
-        params = params.concat(['-i', ident]);
-    });
-
-    return params;
-}
-
-function scp(opts, srcHost, dstHost) {
-    var params = [];
+    if (typeof connOpts === 'string')
+        connOpts = { host: connOpts };
 
     if (opts.identity) {
-        params = params.concat(identitiesArgsArr(opts.identity));
+        connOpts.privateKey = opts.identity;
     }
 
-    if (opts.multiplexed) {
-        params = params.concat(['-S', opts.multiplexed]);
+    if (opts.password) {
+        connOpts.password = opts.password;
     }
 
-    params = params.concat([srcHost, dstHost]);
+    ssh2auth(connOpts, function(err, conn) {
+        if (err) return deferred.reject(err);
+        deferred.resolve(conn);
+    });
 
-    debug(chalk.bold.green('scp %s'), params.join(' '));
-
-    var proc = spawn('scp', params);
-
-    if (debug.enabled) {
-        onLine(proc.stdout, function(l) { debug(chalk.green(l)); });
-        onLine(proc.stderr, function(l) { debug(chalk.red(l)); });
-    }
-
-    return proc;
+    return deferred.promise;
 }
 
-function ssh(opts, host, cmd) {
-    var params = [];
+function copyToHost(conn, opts, localPath, remotePath) {
+    var deferred = q.defer();
 
-    if (opts.identity) {
-        params = params.concat(identitiesArgsArr(opts.identity));
-    }
+    libdebug('copying %s to remote host on %s ...', localPath, remotePath);
 
-    if (opts.multiplexed) {
-        params = params.concat(['-S', opts.multiplexed]);
-    }
+    conn.sftp(function(err, sftp) {
+        if (err) return deferred.reject(err);
 
-    params = params.concat([host, cmd]);
+        var localStream = fs.createReadStream(localPath),
+            remoteStream = sftp.createWriteStream(remotePath);
 
-    debug(chalk.bold.green('ssh %s'), params.join(' '));
+        remoteStream.on('error', function(errr) {
+            deferred.reject(err);
+        });
+        remoteStream.on('finish', function() {
+            deferred.resolve();
+        });
 
-    var proc = spawn('ssh', params);
+        localStream.pipe(remoteStream);
+    });
 
-    if (debug.enabled) {
-        onLine(proc.stdout, function(l) { debug(chalk.green(l)); });
-        onLine(proc.stderr, function(l) { debug(chalk.red(l)); });
-    }
+    return deferred.promise;
+}
 
-    return proc;
+function runInHost(conn, opts, remotePath) {
+    var deferred = q.defer();
+
+    libdebug('running %s ...', remotePath);
+
+    conn.exec('sh '+remotePath, function(err, proc) {
+        if (err) return deferred.reject(err);
+
+        opts.progress && opts.progress(proc);
+
+        promisifyProcess(proc, {captureOutput: opts.captureOutput}).then(function(procInfo) {
+            deferred.resolve(procInfo);
+        });
+    });
+
+    return deferred.promise;
+}
+
+function removeFromHost(conn, opts, remotePath) {
+    var deferred = q.defer();
+
+    libdebug('removing %s ...', remotePath);
+
+    conn.sftp(function(err, sftp) {
+        if (err) return deferred.reject(err);
+
+        sftp.unlink(remotePath, function(err) {
+            if (err) return deferred.reject(err);
+            deferred.resolve();
+        });
+    });
+
+    return deferred.promise;
 }
 
 module.exports = function(scriptPath, host, userOpts, callback) {
@@ -92,57 +127,43 @@ module.exports = function(scriptPath, host, userOpts, callback) {
         userOpts = {};
     }
 
-    var opts = _.extend({}, {
-        identity: false,
-        multiplexed: false,
+    // default available options
+    var dflOptions = {
+        // private key location. Can be an array to send multiple keys. Set to false
+        // to let ssh try the default keys.
+        identity: null,
+        // provide a password directly.
+        password: null,
+        // remote temporary directory to upload the script to run.
         remoteDir: '/tmp'
-    }, userOpts);
+    };
 
-    var hash = crypto.randomBytes(10).toString('hex'),
-        remotePath = path.join(opts.remoteDir, 'sshrun-'+hash+'.sh');
+    var opts = _.extend({}, dflOptions, userOpts),
+        hash = crypto.randomBytes(10).toString('hex'),
+        remotePath = path.join(opts.remoteDir, 'sshrun-'+hash+'.sh'),
+        scriptProcInfo = {};
 
-    new Promise(function(resolve, reject) {
-        var proc = scp(opts, scriptPath, host+':'+remotePath);
-
-        var errors = [];
-        onLine(proc.stderr, function(line) {
-            errors.push(line);
-        });
-
-        proc.addListener('exit', function(code, signal) {
-            if (code || signal) {
-                errors.push('error: scp exited ('+(code || signal)+')');
-                reject(errors);
-            } else {
-                resolve();
-            }
-        });
-    }).then(function() {
-        var command = 'sh '+remotePath+'; rm '+remotePath;
-        var proc = ssh(opts, host, command);
-
-        //proc.stdout.pipe(process.stdout);
-        //proc.stderr.pipe(process.stderr);
-
-        var output = [];
-        onLine(proc.stdout, function(line) {
-            output.push(line);
-        });
-
-        var errors = [];
-        onLine(proc.stderr, function(line) {
-            errors.push(line);
-        });
-
-        proc.addListener('exit', function(code, signal) {
-            if (code || signal) {
-                errors.push('error: ssh exited ('+(code || signal)+')');
-                reject(errors);
-            } else {
-                callback(output);
-            }
-        });
+    connectToHost(host, opts).then(function(conn) {
+        return copyToHost(conn, opts, scriptPath, remotePath)
+            .then(function() {
+                return runInHost(conn, opts, remotePath);
+            }).then(function(procInfo) {
+                scriptProcInfo = procInfo;
+                return removeFromHost(conn, opts, remotePath);
+            }).then(function() {
+                // everything went well, close the connection and return control
+                // to the user.
+                conn.end();
+                callback && callback(null, scriptProcInfo);
+            }).catch(function(err) {
+                // an error during an action in the SSH connection, close the
+                // connection and bubble up the error to the general catch().
+                conn.end();
+                return q.reject(err);
+            });
     }).catch(function(err) {
-        console.log(chalk.bold.red(err));
+        // there was an error somewhere, inform the user.
+        libdebug(err);
+        callback && callback(err);
     });
 };
