@@ -134,6 +134,8 @@ module.exports = function(scriptPath, host, userOpts, callback) {
         identity: null,
         // provide a password directly.
         password: null,
+        // by default, capture the process's output to return it when the script ends.
+        captureOutput: true,
         // remote temporary directory to upload the script to run.
         remoteDir: '/tmp'
     };
