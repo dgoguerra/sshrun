@@ -7,7 +7,7 @@
   "preferGlobal": true,
   "repository": {
     "type": "git",
-    "url": "https://github.com/dgoguerra/sshrun.git"
+    "url": "git+https://github.com/dgoguerra/sshrun.git"
   },
   "bugs": {
     "url": "https://github.com/dgoguerra/sshrun/issues"
@@ -33,5 +33,8 @@
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
-  }
+  },
+  "homepage": "https://github.com/dgoguerra/sshrun#readme",
+  "main": "index.js",
+  "devDependencies": {}
 }
