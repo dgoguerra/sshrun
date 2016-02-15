@@ -16,7 +16,8 @@
     "ssh",
     "ssh2",
     "client",
-    "remote"
+    "remote",
+    "cli"
   ],
   "dependencies": {
     "chalk": "^1.1.1",

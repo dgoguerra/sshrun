@@ -16,8 +16,14 @@ $ cat hello.sh
 #!/bin/bash
 echo "hello world! I'm $(whoami) on $(hostname)."
 
-$ sshrun -i /path/to/key hello.sh ubuntu@example.com:2222'
+$ sshrun -i /path/to/key hello.sh ubuntu@example.com:2222
 hello world! I'm ubuntu on example.com.
+```
+
+You can also provide a password instead of a key file:
+
+```bash
+$ sshrun -p my_password hello.sh other.example.com
 ```
 
 Alternatively, the module can be used directly within node.js.
