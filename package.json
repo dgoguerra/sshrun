@@ -12,6 +12,12 @@
   "bugs": {
     "url": "https://github.com/dgoguerra/sshrun/issues"
   },
+  "keywords": [
+    "ssh",
+    "ssh2",
+    "client",
+    "remote"
+  ],
   "dependencies": {
     "chalk": "^1.1.1",
     "debug": "^2.2.0",
