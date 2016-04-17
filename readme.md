@@ -14,16 +14,18 @@ which sshrun # /usr/local/bin/sshrun
 ```bash
 $ cat hello.sh
 #!/bin/bash
-echo "hello world! I'm $(whoami) on $(hostname)."
+echo "hello world! I'm $(whoami) on $(hostname). args: '$@'"
 
-$ sshrun -i /path/to/key hello.sh ubuntu@example.com:2222
-hello world! I'm ubuntu on example.com.
+$ sshrun -i /path/to/key ubuntu@example.com:2222 -- hello.sh
+hello world! I'm ubuntu on example.com. args: ''
 ```
 
-You can also provide a password instead of a key file:
+A SSH password can also be provided instead. Any args after
+the script name will be passed to the script.
 
 ```bash
-$ sshrun -p my_password hello.sh other.example.com
+$ sshrun -p my_password other.example.com -- hello.sh --opt=123 -a 123
+hello world! I'm ubuntu on example.com. args: '--opt=123 -a 123'
 ```
 
 Alternatively, the module can be used directly within node.js.
@@ -31,8 +33,10 @@ Alternatively, the module can be used directly within node.js.
 ```js
 var sshrun = require('sshrun');
 
-var host = { user: 'ubuntu', host: 'example.com', port: 2222 },
-    opts = { identity: '/path/to/key' };
+var opts = {
+    host: { user: 'ubuntu', host: 'example.com', port: 2222 },
+    identity: '/path/to/key'
+};
 
 // optional callback called when the script process starts to run.
 opts.progress = function(proc) {
@@ -45,8 +49,8 @@ opts.progress = function(proc) {
 // custom manipulation to stdout and stderr.
 opts.captureOutput = false;
 
-sshrun('/path/to/hello.sh', host, opts, function(err, procInfo) {
-    if (err) return console.log(err);
+sshrun('/path/to/hello.sh', opts, function(err, procInfo) {
+    if (err) throw err;
 
     // procInfo contains some info and the output of the
     // process which ran the script
