@@ -85,12 +85,14 @@ function copyToHost(conn, opts, localPath, remotePath) {
     return deferred.promise;
 }
 
-function runInHost(conn, opts, remotePath) {
+function runInHost(conn, opts, remotePath, args) {
     var deferred = q.defer();
 
-    libdebug('running %s ...', remotePath);
+    var cmd = args.length ? (remotePath+' "'+args.join('" "')+'"') : remotePath;
 
-    conn.exec('sh '+remotePath, function(err, proc) {
+    libdebug('running %s ...', cmd);
+
+    conn.exec('sh '+cmd, function(err, proc) {
         if (err) return deferred.reject(err);
 
         opts.progress && opts.progress(proc);
@@ -120,15 +122,19 @@ function removeFromHost(conn, opts, remotePath) {
     return deferred.promise;
 }
 
-module.exports = function(scriptPath, host, userOpts, callback) {
-    // if there are only 3 arguments, then there are no userOpts
-    if (!callback) {
-        callback = userOpts;
-        userOpts = {};
+module.exports = function(scriptPath, options, callback) {
+    // the only required option is the host to connect to.
+    // it can be provided as a string directly
+    if (typeof options === 'string') {
+        options = {host: options};
     }
 
     // default available options
     var dflOptions = {
+        // array of arguments to run the script with.
+        args: [],
+        // host to connect to. [user@]hostname[:port]
+        host: null,
         // private key location. Can be an array to send multiple keys. Set to false
         // to let ssh try the default keys.
         identity: null,
@@ -140,15 +146,15 @@ module.exports = function(scriptPath, host, userOpts, callback) {
         remoteDir: '/tmp'
     };
 
-    var opts = _.extend({}, dflOptions, userOpts),
+    var opts = _.extend({}, dflOptions, options),
         hash = crypto.randomBytes(10).toString('hex'),
         remotePath = path.join(opts.remoteDir, 'sshrun-'+hash+'.sh'),
         scriptProcInfo = {};
 
-    connectToHost(host, opts).then(function(conn) {
+    connectToHost(opts.host, opts).then(function(conn) {
         return copyToHost(conn, opts, scriptPath, remotePath)
             .then(function() {
-                return runInHost(conn, opts, remotePath);
+                return runInHost(conn, opts, remotePath, opts.args);
             }).then(function(procInfo) {
                 scriptProcInfo = procInfo;
                 return removeFromHost(conn, opts, remotePath);
