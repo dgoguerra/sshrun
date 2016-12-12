@@ -1,7 +1,7 @@
 {
   "name": "sshrun",
   "version": "0.1.1",
-  "description": "Run a script remotely through SSH",
+  "description": "Run a local script remotely through SSH",
   "author": "Diego Guerra <dgoguerra.or@gmail.com>",
   "license": "MIT",
   "preferGlobal": true,

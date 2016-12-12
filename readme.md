@@ -1,6 +1,6 @@
 ## sshrun
 
-Utility to run a script remotely through SSH. Internally uses the node.js SSH implementation [SSH2](https://github.com/mscdex/ssh2).
+Utility to run a local script remotely through SSH. Internally uses the node.js SSH implementation [SSH2](https://github.com/mscdex/ssh2).
 
 ### Installation
 
